@@ -130,6 +130,8 @@ export default function App() {
   const [news, setNews]       = useState([]);
   const [trades, setTrades]   = useState([]);
   const [users, setUsers]     = useState([]);
+  const [orders, setOrders]   = useState([]);
+  const [phase, setPhase]     = useState(1);
   const [toast, setToast]     = useState(null);
   const chRef = useRef([]);
 
@@ -151,12 +153,24 @@ export default function App() {
       setTrades(p => [payload.item, ...p].slice(0, 150));
     }).subscribe();
     const c4 = sb().channel("user-bc").on("broadcast", { event: "user_update" }, () => { loadUsers(); }).subscribe();
-    chRef.current = [c1, c2, c3, c4];
+    const c5 = sb().channel("phase-bc").on("broadcast", { event: "phase_change" }, ({ payload }) => {
+      setPhase(payload.phase);
+    }).subscribe();
+    const c6 = sb().channel("order-bc").on("broadcast", { event: "order_update" }, () => { loadOrders(); }).subscribe();
+    chRef.current = [c1, c2, c3, c4, c5, c6];
     return () => chRef.current.forEach(c => sb().removeChannel(c));
   }, [screen]);
 
   const loadAll = async () => {
-    await Promise.all([loadPrices(), loadNews(), loadTrades(), loadUsers()]);
+    await Promise.all([loadPrices(), loadNews(), loadTrades(), loadUsers(), loadOrders(), loadPhase()]);
+  };
+  const loadPhase = async () => {
+    const { data } = await sb().from("mm_settings").select("*").eq("key","phase").single();
+    if (data) setPhase(parseInt(data.value));
+  };
+  const loadOrders = async () => {
+    const { data } = await sb().from("mm_orders").select("*").eq("status","open").order("created_at", { ascending: false });
+    if (data) setOrders(data);
   };
   const loadPrices = async () => {
     const { data } = await sb().from("mm_prices").select("*").order("updated_at", { ascending: false }).limit(1);
@@ -205,12 +219,12 @@ export default function App() {
     </>
   );
 
-  const shared = { prices, prevPrices, indexPrice, news, trades, showToast };
+  const shared = { prices, prevPrices, indexPrice, news, trades, showToast, phase, orders };
   return (
     <><style>{CSS}</style>
       {screen === "admin"
-        ? <AdminScreen {...shared} users={users} onLogout={() => setScreen("login")} setPrices={setPrices} setPrev={setPrev} setIdx={setIdx} setNews={setNews} setTrades={setTrades} setUsers={setUsers} loadAll={loadAll} />
-        : <MarketScreen {...shared} user={user} onLogout={() => { setUser(null); setScreen("login"); }} refreshUser={refreshUser} />
+        ? <AdminScreen {...shared} users={users} onLogout={() => setScreen("login")} setPrices={setPrices} setPrev={setPrev} setIdx={setIdx} setNews={setNews} setTrades={setTrades} setUsers={setUsers} setOrders={setOrders} setPhase={setPhase} loadAll={loadAll} />
+        : <MarketScreen {...shared} user={user} onLogout={() => { setUser(null); setScreen("login"); }} refreshUser={refreshUser} loadOrders={loadOrders} />
       }
       {toast && <div className={`toast toast-${toast.type}`}>{toast.msg}</div>}
     </>
@@ -300,7 +314,7 @@ function TickerBar({ prices, prevPrices, indexPrice }) {
   );
 }
 
-function MarketScreen({ user, prices, prevPrices, indexPrice, news, trades, showToast, onLogout, refreshUser }) {
+function MarketScreen({ user, prices, prevPrices, indexPrice, news, trades, showToast, onLogout, refreshUser, phase, orders, loadOrders }) {
   const [tab, setTab] = useState("market");
   const portfolio = user?.portfolio ?? {};
   const cash = user?.cash ?? STARTING_BALANCE;
@@ -309,8 +323,8 @@ function MarketScreen({ user, prices, prevPrices, indexPrice, news, trades, show
   const optPnl = optPort.reduce((a,pos) => a + (bsPrice(pos.type,indexPrice,pos.strike) - pos.premium)*75*pos.lots, 0);
   const totalPnl = stockPnl + optPnl;
   const totalInvested = Object.entries(portfolio).reduce((a,[sym,pos]) => a + pos.avg_price*pos.qty, 0);
-  const tabs = ["market","portfolio","derivatives","news","leaderboard","tradelog"];
-  const tabLabels = { market:"📊 Market", portfolio:"💼 Portfolio", derivatives:"⚡ Derivatives", news:"📰 News", leaderboard:"🏆 Leaderboard", tradelog:"📋 Trade Log" };
+  const tabs = ["market","portfolio","derivatives","orderbook","news","leaderboard","tradelog"];
+  const tabLabels = { market:"📊 Market", portfolio:"💼 Portfolio", derivatives:"⚡ Derivatives", orderbook:"📒 Order Book", news:"📰 News", leaderboard:"🏆 Leaderboard", tradelog:"📋 Trade Log" };
 
   return (
     <div>
@@ -323,6 +337,9 @@ function MarketScreen({ user, prices, prevPrices, indexPrice, news, trades, show
           </div>
         </div>
         <div style={{ display:"flex", alignItems:"center", gap:10, whiteSpace:"nowrap" }}>
+          <div style={{ padding:"4px 12px", borderRadius:20, fontSize:11, fontWeight:800, background: phase===1 ? "rgba(99,102,241,.2)" : "rgba(245,158,11,.2)", color: phase===1 ? "#818cf8" : "#f59e0b" }}>
+            PHASE {phase} {phase===1 ? "— BUILD" : "— TRADE"}
+          </div>
           <span style={{ fontSize:12, color:"#555" }}>👤 {user?.display_name}</span>
           <button className="btn btn-ghost btn-sm" onClick={onLogout}>Logout</button>
         </div>
@@ -334,9 +351,10 @@ function MarketScreen({ user, prices, prevPrices, indexPrice, news, trades, show
         <div><span className="live-dot" /><span style={{ color:"#555", fontSize:11 }}>LIVE</span></div>
       </div>
       <div style={{ padding:24 }}>
-        {tab==="market"      && <MarketTab prices={prices} prevPrices={prevPrices} portfolio={portfolio} cash={cash} user={user} showToast={showToast} refreshUser={refreshUser} />}
+        {tab==="market"      && <MarketTab prices={prices} prevPrices={prevPrices} portfolio={portfolio} cash={cash} user={user} showToast={showToast} refreshUser={refreshUser} phase={phase} loadOrders={loadOrders} />}
         {tab==="portfolio"   && <PortfolioTab portfolio={portfolio} optPort={optPort} prices={prices} indexPrice={indexPrice} cash={cash} />}
-        {tab==="derivatives" && <DerivativesTab indexPrice={indexPrice} optPort={optPort} user={user} showToast={showToast} refreshUser={refreshUser} cash={cash} />}
+        {tab==="derivatives" && <DerivativesTab indexPrice={indexPrice} optPort={optPort} user={user} showToast={showToast} refreshUser={refreshUser} cash={cash} phase={phase} loadOrders={loadOrders} />}
+        {tab==="orderbook"   && <OrderBookTab orders={orders} user={user} prices={prices} showToast={showToast} refreshUser={refreshUser} loadOrders={loadOrders} phase={phase} />}
         {tab==="news"        && <NewsTab news={news} />}
         {tab==="leaderboard" && <LeaderboardTab user={user} prices={prices} indexPrice={indexPrice} />}
         {tab==="tradelog"    && <TradeLogTab trades={trades} userId={user?.id} />}
@@ -345,46 +363,83 @@ function MarketScreen({ user, prices, prevPrices, indexPrice, news, trades, show
   );
 }
 
-function MarketTab({ prices, prevPrices, portfolio, cash, user, showToast, refreshUser }) {
+function MarketTab({ prices, prevPrices, portfolio, cash, user, showToast, refreshUser, phase, loadOrders }) {
   const [sel, setSel] = useState(null);
   const [qty, setQty] = useState(1);
   const [mode, setMode] = useState("buy");
+  const [loading, setLoading] = useState(false);
 
-  const executeTrade = async (sym, type, quantity, price) => {
+  // Phase 1: instant buy execution
+  const executeBuy = async (sym, quantity, price) => {
     const cost = price * quantity;
-    if (type==="buy" && cost>cash) { showToast("Insufficient cash!","error"); return; }
+    if (cost > cash) { showToast("Insufficient cash!", "error"); return; }
+    setLoading(true);
     const pos = portfolio[sym] ?? { qty:0, avg_price:0 };
-    if (type==="sell" && pos.qty<quantity) { showToast("Not enough shares!","error"); return; }
-    let newPort = { ...portfolio };
-    let newCash = cash;
-    if (type==="buy") {
-      const nq = pos.qty+quantity;
-      newPort[sym] = { qty:nq, avg_price:(pos.avg_price*pos.qty + price*quantity)/nq };
-      newCash -= cost;
-    } else {
-      const nq = pos.qty-quantity;
-      if (nq===0) delete newPort[sym]; else newPort[sym] = { ...pos, qty:nq };
-      newCash += cost;
-    }
-    const impact = (quantity/500)*(type==="buy"?1:-1);
-    const newPrices = { ...prices };
-    newPrices[sym] = Math.max(1, price*(1+impact));
+    const nq = pos.qty + quantity;
+    const newPort = { ...portfolio, [sym]: { qty:nq, avg_price:(pos.avg_price*pos.qty + price*quantity)/nq } };
+    const newCash = cash - cost;
+    const impact = (quantity/500);
+    const newPrices = { ...prices, [sym]: Math.max(1, price*(1+impact)) };
     const newIdx = Object.values(newPrices).reduce((a,v)=>a+v,0)/STOCKS.length*3.1;
     await Promise.all([
       sb().from("mm_users").update({ cash:newCash, portfolio:newPort }).eq("id", user.id),
       sb().from("mm_prices").upsert({ id:1, prices:newPrices, index_price:newIdx, updated_at:new Date().toISOString() }),
-      sb().from("mm_trades").insert({ user_id:user.id, display_name:user.display_name, symbol:sym, type, qty:quantity, price, is_admin:false }),
+      sb().from("mm_trades").insert({ user_id:user.id, display_name:user.display_name, symbol:sym, type:"buy", qty:quantity, price, is_admin:false }),
     ]);
     await sb().channel("price-bc").send({ type:"broadcast", event:"px", payload:{ prev:prices, prices:newPrices, idx:newIdx } });
-    await sb().channel("trade-bc").send({ type:"broadcast", event:"trade", payload:{ item:{ display_name:user.display_name, symbol:sym, type, qty:quantity, price, is_admin:false, created_at:new Date().toISOString() } } });
-    showToast(`${type==="buy"?"Bought":"Sold"} ${quantity} × ${sym} @ ${fmt(price)}`);
+    await sb().channel("trade-bc").send({ type:"broadcast", event:"trade", payload:{ item:{ display_name:user.display_name, symbol:sym, type:"buy", qty:quantity, price, is_admin:false, created_at:new Date().toISOString() } } });
+    showToast(`Bought ${quantity} × ${sym} @ ${fmt(price)}`);
     await refreshUser();
+    setLoading(false);
+  };
+
+  // Phase 2: place order into order book
+  const placeOrder = async (sym, type, quantity, price) => {
+    if (type==="buy" && price*quantity > cash) { showToast("Insufficient cash!", "error"); return; }
+    const pos = portfolio[sym] ?? { qty:0, avg_price:0 };
+    if (type==="sell" && pos.qty < quantity) { showToast("Not enough shares!", "error"); return; }
+    setLoading(true);
+    const { error } = await sb().from("mm_orders").insert({
+      user_id: user.id,
+      display_name: user.display_name,
+      symbol: sym,
+      type,
+      qty: quantity,
+      price,
+      status: "open",
+    });
+    if (error) { showToast("Failed to place order", "error"); setLoading(false); return; }
+    await sb().channel("order-bc").send({ type:"broadcast", event:"order_update", payload:{} });
+    if (loadOrders) await loadOrders();
+    showToast(`${type==="buy"?"Buy":"Sell"} order placed for ${quantity} × ${sym} @ ${fmt(price)} — waiting for counterparty`, "info");
+    setLoading(false);
+  };
+
+  const handleAction = () => {
+    if (!sel) return;
+    const price = prices[sel.symbol] ?? sel.base;
+    if (phase === 1) {
+      if (mode === "sell") { showToast("Selling not allowed in Phase 1 (Portfolio Building)", "error"); return; }
+      executeBuy(sel.symbol, qty, price);
+    } else {
+      placeOrder(sel.symbol, mode, qty, price);
+    }
   };
 
   return (
     <div style={{ display:"grid", gridTemplateColumns:"1fr 320px", gap:20 }}>
       <div>
-        <div style={{ fontWeight:700, fontSize:16, marginBottom:14 }}>Live Market</div>
+        <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:14 }}>
+          <div style={{ fontWeight:700, fontSize:16 }}>Live Market</div>
+          <div style={{ padding:"4px 14px", borderRadius:20, fontSize:11, fontWeight:800, background: phase===1 ? "rgba(99,102,241,.15)" : "rgba(245,158,11,.15)", color: phase===1 ? "#818cf8" : "#f59e0b" }}>
+            {phase===1 ? "📥 Phase 1 — Buy Only" : "⚖️ Phase 2 — Order Book"}
+          </div>
+        </div>
+        {phase===2 && (
+          <div style={{ background:"rgba(245,158,11,.08)", border:"1px solid rgba(245,158,11,.2)", borderRadius:12, padding:"10px 16px", marginBottom:14, fontSize:13, color:"#f59e0b" }}>
+            ⚠️ In Phase 2, your orders only execute when someone takes the other side. Go to <b>Order Book</b> tab to see pending orders.
+          </div>
+        )}
         <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
           {STOCKS.map(s => {
             const p = prices[s.symbol]??s.base;
@@ -413,12 +468,10 @@ function MarketTab({ prices, prevPrices, portfolio, cash, user, showToast, refre
               <div style={{ color:"#555", fontSize:12, marginBottom:14 }}>{sel.name}</div>
               <div className="mono" style={{ fontSize:24, fontWeight:700, color:clr(prices[sel.symbol]??sel.base, prevPrices[sel.symbol]??sel.base), marginBottom:16 }}>{fmt(prices[sel.symbol]??sel.base)}</div>
               <div style={{ display:"flex", gap:6, marginBottom:14, background:"#0a0a16", borderRadius:10, padding:4 }}>
-                {["buy","sell"].map(m => (
-                  <button key={m} className="btn" onClick={() => setMode(m)} style={{ flex:1, padding:8, fontSize:13, borderRadius:8, background:mode===m?(m==="buy"?"rgba(0,230,118,.15)":"rgba(255,23,68,.15)"):"none", color:mode===m?(m==="buy"?"#00e676":"#ff1744"):"#555" }}>
-                    {m==="buy"?"▲ BUY":"▼ SELL"}
-                  </button>
-                ))}
+                <button className="btn" onClick={() => setMode("buy")} style={{ flex:1, padding:8, fontSize:13, borderRadius:8, background:mode==="buy"?"rgba(0,230,118,.15)":"none", color:mode==="buy"?"#00e676":"#555" }}>▲ BUY</button>
+                {phase === 2 && <button className="btn" onClick={() => setMode("sell")} style={{ flex:1, padding:8, fontSize:13, borderRadius:8, background:mode==="sell"?"rgba(255,23,68,.15)":"none", color:mode==="sell"?"#ff1744":"#555" }}>▼ SELL</button>}
               </div>
+              {phase === 1 && <div style={{ fontSize:11, color:"#666", marginBottom:12, padding:"6px 10px", background:"rgba(99,102,241,.08)", borderRadius:8 }}>Phase 1: Buy only. Selling opens in Phase 2.</div>}
               <div style={{ marginBottom:12 }}>
                 <div style={{ fontSize:11, color:"#555", marginBottom:5, textTransform:"uppercase", letterSpacing:1 }}>Quantity</div>
                 <input type="number" min={1} value={qty} onChange={e => setQty(Math.max(1, parseInt(e.target.value)||1))} />
@@ -431,10 +484,9 @@ function MarketTab({ prices, prevPrices, portfolio, cash, user, showToast, refre
                   <span style={{ color:"#555" }}>Total</span><span className="mono" style={{ fontWeight:700 }}>{fmt((prices[sel.symbol]??sel.base)*qty)}</span>
                 </div>
               </div>
-              {mode==="buy"
-                ? <button className="btn btn-buy" style={{ width:"100%" }} onClick={() => executeTrade(sel.symbol,"buy",qty,prices[sel.symbol]??sel.base)}>BUY {qty} × {sel.symbol}</button>
-                : <button className="btn btn-sell" style={{ width:"100%" }} onClick={() => executeTrade(sel.symbol,"sell",qty,prices[sel.symbol]??sel.base)}>SELL {qty} × {sel.symbol}</button>
-              }
+              <button disabled={loading} className={`btn ${mode==="buy"?"btn-buy":"btn-sell"}`} style={{ width:"100%" }} onClick={handleAction}>
+                {loading ? "Please wait..." : phase===1 ? `BUY ${qty} × ${sel.symbol}` : `PLACE ${mode.toUpperCase()} ORDER — ${qty} × ${sel.symbol}`}
+              </button>
               <div style={{ marginTop:10, fontSize:12, color:"#444", textAlign:"center" }}>Cash: {fmt(cash)}</div>
             </>
           ) : (
@@ -631,6 +683,166 @@ function DerivativesTab({ indexPrice, optPort, user, showToast, refreshUser, cas
   );
 }
 
+function OrderBookTab({ orders, user, prices, showToast, refreshUser, loadOrders, phase }) {
+  const [loading, setLoading] = useState(null);
+
+  const takeOrder = async (order) => {
+    if (order.user_id === user.id) { showToast("You can't take your own order!", "error"); return; }
+    setLoading(order.id);
+
+    const price = order.price;
+    const qty = order.qty;
+    const sym = order.symbol;
+    const takerType = order.type === "buy" ? "sell" : "buy";
+
+    // Fetch fresh data for both users
+    const [{ data: maker }, { data: taker }] = await Promise.all([
+      sb().from("mm_users").select("*").eq("id", order.user_id).single(),
+      sb().from("mm_users").select("*").eq("id", user.id).single(),
+    ]);
+    if (!maker || !taker) { showToast("Could not fetch user data", "error"); setLoading(null); return; }
+
+    const total = price * qty;
+
+    // Validate taker
+    if (takerType === "buy" && taker.cash < total) { showToast("Insufficient cash!", "error"); setLoading(null); return; }
+    if (takerType === "sell") {
+      const pos = taker.portfolio?.[sym];
+      if (!pos || pos.qty < qty) { showToast("You don't have enough shares to sell!", "error"); setLoading(null); return; }
+    }
+
+    // Update maker (original order placer)
+    let makerPort = { ...maker.portfolio };
+    let makerCash = maker.cash;
+    if (order.type === "buy") {
+      const pos = makerPort[sym] ?? { qty:0, avg_price:0 };
+      const nq = pos.qty + qty;
+      makerPort[sym] = { qty:nq, avg_price:(pos.avg_price*pos.qty + price*qty)/nq };
+      makerCash -= total;
+    } else {
+      const pos = makerPort[sym] ?? { qty:0, avg_price:0 };
+      const nq = pos.qty - qty;
+      if (nq <= 0) delete makerPort[sym]; else makerPort[sym] = { ...pos, qty:nq };
+      makerCash += total;
+    }
+
+    // Update taker
+    let takerPort = { ...taker.portfolio };
+    let takerCash = taker.cash;
+    if (takerType === "buy") {
+      const pos = takerPort[sym] ?? { qty:0, avg_price:0 };
+      const nq = pos.qty + qty;
+      takerPort[sym] = { qty:nq, avg_price:(pos.avg_price*pos.qty + price*qty)/nq };
+      takerCash -= total;
+    } else {
+      const pos = takerPort[sym] ?? { qty:0, avg_price:0 };
+      const nq = pos.qty - qty;
+      if (nq <= 0) delete takerPort[sym]; else takerPort[sym] = { ...pos, qty:nq };
+      takerCash += total;
+    }
+
+    // Price impact from executed trade
+    const impact = (qty/500) * (order.type === "buy" ? 1 : -1);
+    const newPrices = { ...prices, [sym]: Math.max(1, price*(1+impact)) };
+    const newIdx = Object.values(newPrices).reduce((a,v)=>a+v,0)/STOCKS.length*3.1;
+
+    await Promise.all([
+      sb().from("mm_users").update({ cash:makerCash, portfolio:makerPort }).eq("id", maker.id),
+      sb().from("mm_users").update({ cash:takerCash, portfolio:takerPort }).eq("id", taker.id),
+      sb().from("mm_orders").update({ status:"executed", executed_by:user.id, executed_at:new Date().toISOString() }).eq("id", order.id),
+      sb().from("mm_prices").upsert({ id:1, prices:newPrices, index_price:newIdx, updated_at:new Date().toISOString() }),
+      sb().from("mm_trades").insert({ user_id:user.id, display_name:`${maker.display_name} ↔ ${taker.display_name}`, symbol:sym, type:order.type, qty, price, is_admin:false }),
+    ]);
+    await sb().channel("price-bc").send({ type:"broadcast", event:"px", payload:{ prev:prices, prices:newPrices, idx:newIdx } });
+    await sb().channel("order-bc").send({ type:"broadcast", event:"order_update", payload:{} });
+    await sb().channel("trade-bc").send({ type:"broadcast", event:"trade", payload:{ item:{ display_name:`${maker.display_name} ↔ ${taker.display_name}`, symbol:sym, type:order.type, qty, price, is_admin:false, created_at:new Date().toISOString() } } });
+    showToast(`Trade executed! ${qty} × ${sym} @ ${fmt(price)}`);
+    await refreshUser();
+    if (loadOrders) await loadOrders();
+    setLoading(null);
+  };
+
+  const cancelOrder = async (order) => {
+    if (order.user_id !== user.id) return;
+    await sb().from("mm_orders").update({ status:"cancelled" }).eq("id", order.id);
+    await sb().channel("order-bc").send({ type:"broadcast", event:"order_update", payload:{} });
+    if (loadOrders) await loadOrders();
+    showToast("Order cancelled");
+  };
+
+  const myOrders = orders.filter(o => o.user_id === user.id);
+  const otherOrders = orders.filter(o => o.user_id !== user.id);
+
+  return (
+    <div style={{ display:"flex", flexDirection:"column", gap:24 }}>
+      {phase === 1 && (
+        <div style={{ background:"rgba(99,102,241,.08)", border:"1px solid rgba(99,102,241,.2)", borderRadius:12, padding:"16px 20px", color:"#818cf8" }}>
+          📥 Order book is active in <b>Phase 2</b>. Currently in Phase 1 (Buy Only mode).
+        </div>
+      )}
+      <div className="card">
+        <div style={{ fontWeight:700, fontSize:15, marginBottom:16 }}>📒 Open Orders — Take the Other Side</div>
+        {otherOrders.length === 0 ? (
+          <div style={{ color:"#444", textAlign:"center", padding:40 }}>
+            <div style={{ fontSize:32, marginBottom:10 }}>📭</div>
+            <div>No open orders from other traders yet</div>
+          </div>
+        ) : (
+          <table>
+            <thead><tr><th>Trader</th><th>Stock</th><th>Type</th><th>Qty</th><th>Price</th><th>Total</th><th>Time</th><th>Action</th></tr></thead>
+            <tbody>
+              {otherOrders.map(o => (
+                <tr key={o.id}>
+                  <td><b>{o.display_name}</b></td>
+                  <td><b>{o.symbol}</b></td>
+                  <td><span className={`tag tag-${o.type==="buy"?"green":"red"}`}>{o.type.toUpperCase()}</span></td>
+                  <td className="mono">{o.qty}</td>
+                  <td className="mono">{fmt(o.price)}</td>
+                  <td className="mono">{fmt(o.price*o.qty)}</td>
+                  <td style={{ color:"#555", fontSize:11 }}>{tsStr(o.created_at)}</td>
+                  <td>
+                    <button
+                      className={`btn btn-${o.type==="buy"?"sell":"buy"}`}
+                      style={{ padding:"6px 14px", fontSize:12 }}
+                      disabled={loading===o.id}
+                      onClick={() => takeOrder(o)}
+                    >
+                      {loading===o.id ? "..." : o.type==="buy" ? "▼ SELL to them" : "▲ BUY from them"}
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+      <div className="card">
+        <div style={{ fontWeight:700, fontSize:15, marginBottom:16 }}>🕐 My Pending Orders</div>
+        {myOrders.length === 0 ? (
+          <div style={{ color:"#444", textAlign:"center", padding:30 }}>No pending orders from you</div>
+        ) : (
+          <table>
+            <thead><tr><th>Stock</th><th>Type</th><th>Qty</th><th>Price</th><th>Total</th><th>Time</th><th></th></tr></thead>
+            <tbody>
+              {myOrders.map(o => (
+                <tr key={o.id}>
+                  <td><b>{o.symbol}</b></td>
+                  <td><span className={`tag tag-${o.type==="buy"?"green":"red"}`}>{o.type.toUpperCase()}</span></td>
+                  <td className="mono">{o.qty}</td>
+                  <td className="mono">{fmt(o.price)}</td>
+                  <td className="mono">{fmt(o.price*o.qty)}</td>
+                  <td style={{ color:"#555", fontSize:11 }}>{tsStr(o.created_at)}</td>
+                  <td><button className="btn btn-ghost" style={{ fontSize:11, padding:"4px 10px" }} onClick={() => cancelOrder(o)}>Cancel</button></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function NewsTab({ news }) {
   return (
     <div style={{ maxWidth:700 }}>
@@ -724,10 +936,18 @@ function TradeLogTab({ trades, userId }) {
   );
 }
 
-function AdminScreen({ prices, prevPrices, indexPrice, news, trades, users, onLogout, setPrices, setPrev, setIdx, setNews, setTrades, setUsers, loadAll, showToast }) {
+function AdminScreen({ prices, prevPrices, indexPrice, news, trades, users, onLogout, setPrices, setPrev, setIdx, setNews, setTrades, setUsers, setOrders, setPhase, loadAll, showToast, phase, orders }) {
   const [tab, setTab] = useState("market");
   const tabs = ["market","users","news","tradelog","portfolios"];
   const tabLabels = { market:"📊 Market Control", users:"👥 Users", news:"📰 Post News", tradelog:"📋 Trade Log", portfolios:"💼 All Portfolios" };
+
+  const switchPhase = async (newPhase) => {
+    await sb().from("mm_settings").upsert({ key:"phase", value:String(newPhase) });
+    await sb().channel("phase-bc").send({ type:"broadcast", event:"phase_change", payload:{ phase:newPhase } });
+    setPhase(newPhase);
+    showToast(`Switched to Phase ${newPhase}!`, "success");
+  };
+
   return (
     <div>
       <TickerBar prices={prices} prevPrices={prevPrices} indexPrice={indexPrice} />
@@ -741,8 +961,15 @@ function AdminScreen({ prices, prevPrices, indexPrice, news, trades, users, onLo
             {tabs.map(t => <button key={t} className={`nav-tab ${tab===t?"active":""}`} onClick={() => setTab(t)}>{tabLabels[t]}</button>)}
           </div>
         </div>
-        <div style={{ display:"flex", gap:8 }}>
-          <ResetButton showToast={showToast} loadAll={loadAll} setPrices={setPrices} setPrev={setPrev} setIdx={setIdx} setNews={setNews} setTrades={setTrades} setUsers={setUsers} />
+        <div style={{ display:"flex", gap:8, alignItems:"center" }}>
+          <div style={{ display:"flex", gap:4, background:"#0a0a16", borderRadius:10, padding:4 }}>
+            {[1,2].map(p => (
+              <button key={p} className="btn" onClick={() => switchPhase(p)} style={{ padding:"6px 14px", fontSize:12, borderRadius:8, fontWeight:800, background:phase===p?(p===1?"rgba(99,102,241,.25)":"rgba(245,158,11,.25)"):"none", color:phase===p?(p===1?"#818cf8":"#f59e0b"):"#555" }}>
+                Phase {p}
+              </button>
+            ))}
+          </div>
+          <ResetButton showToast={showToast} loadAll={loadAll} setPrices={setPrices} setPrev={setPrev} setIdx={setIdx} setNews={setNews} setTrades={setTrades} setUsers={setUsers} setOrders={setOrders} setPhase={setPhase} />
           <button className="btn btn-ghost btn-sm" onClick={onLogout}>Logout</button>
         </div>
       </div>
@@ -757,7 +984,7 @@ function AdminScreen({ prices, prevPrices, indexPrice, news, trades, users, onLo
   );
 }
 
-function ResetButton({ showToast, loadAll, setPrices, setPrev, setIdx, setNews, setTrades, setUsers }) {
+function ResetButton({ showToast, loadAll, setPrices, setPrev, setIdx, setNews, setTrades, setUsers, setOrders, setPhase }) {
   const [confirm, setConfirm] = useState(false);
   const [loading, setLoading] = useState(false);
   const doReset = async () => {
@@ -767,11 +994,16 @@ function ResetButton({ showToast, loadAll, setPrices, setPrev, setIdx, setNews, 
         sb().from("mm_trades").delete().neq("id", "00000000-0000-0000-0000-000000000000"),
         sb().from("mm_news").delete().neq("id", "00000000-0000-0000-0000-000000000000"),
         sb().from("mm_users").delete().neq("id", "00000000-0000-0000-0000-000000000000"),
+        sb().from("mm_orders").delete().neq("id", "00000000-0000-0000-0000-000000000000"),
       ]);
-      await sb().from("mm_prices").upsert({ id:1, prices:BASE_PRICES, index_price:BASE_INDEX, updated_at:new Date().toISOString() });
+      await Promise.all([
+        sb().from("mm_prices").upsert({ id:1, prices:BASE_PRICES, index_price:BASE_INDEX, updated_at:new Date().toISOString() }),
+        sb().from("mm_settings").upsert({ key:"phase", value:"1" }),
+      ]);
       await sb().channel("price-bc").send({ type:"broadcast", event:"px", payload:{ prev:BASE_PRICES, prices:BASE_PRICES, idx:BASE_INDEX } });
+      await sb().channel("phase-bc").send({ type:"broadcast", event:"phase_change", payload:{ phase:1 } });
       setPrices({...BASE_PRICES}); setPrev({...BASE_PRICES}); setIdx(BASE_INDEX);
-      setNews([]); setTrades([]); setUsers([]);
+      setNews([]); setTrades([]); setUsers([]); setOrders([]); setPhase(1);
       showToast("✅ Session reset! All data cleared.", "success");
     } catch(e) { showToast("Reset failed: "+e.message, "error"); }
     setLoading(false); setConfirm(false);
