@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const SUPABASE_URL = "https://aruemywjjfnpplqpbywe.supabase.co";
-const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFydWVteXdqamZucHBscXBieXdlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI5MzM1ODUsImV4cCI6MjA4ODUwOTU4NX0.rnQ_pLhQPvtuJa9mre9_t_igopql-nf2CuTCgCP-EW4;
+const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFydWVteXdqamZucHBscXBieXdlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI5MzM1ODUsImV4cCI6MjA4ODUwOTU4NX0.rnQ_pLhQPvtuJa9mre9_t_igopql-nf2CuTCgCP-EW4";
 const ADMIN_USER = "admin";
 const ADMIN_PASS = "admin123";
 const INDEX_NAME = "MOCK50";
