@@ -352,7 +352,7 @@ function MarketScreen({ user, prices, prevPrices, indexPrice, news, trades, show
       </div>
       <div style={{ padding:24 }}>
         {tab==="market"      && <MarketTab prices={prices} prevPrices={prevPrices} portfolio={portfolio} cash={cash} user={user} showToast={showToast} refreshUser={refreshUser} phase={phase} loadOrders={loadOrders} />}
-        {tab==="portfolio"   && <PortfolioTab portfolio={portfolio} optPort={optPort} prices={prices} indexPrice={indexPrice} cash={cash} />}
+        {tab==="portfolio"   && <PortfolioTab portfolio={portfolio} optPort={optPort} prices={prices} indexPrice={indexPrice} cash={cash} user={user} showToast={showToast} refreshUser={refreshUser} />}
         {tab==="derivatives" && <DerivativesTab indexPrice={indexPrice} optPort={optPort} user={user} showToast={showToast} refreshUser={refreshUser} cash={cash} phase={phase} loadOrders={loadOrders} />}
         {tab==="orderbook"   && <OrderBookTab orders={orders} user={user} prices={prices} showToast={showToast} refreshUser={refreshUser} loadOrders={loadOrders} phase={phase} />}
         {tab==="news"        && <NewsTab news={news} />}
@@ -501,7 +501,7 @@ function MarketTab({ prices, prevPrices, portfolio, cash, user, showToast, refre
   );
 }
 
-function PortfolioTab({ portfolio, optPort, prices, indexPrice, cash }) {
+function PortfolioTab({ portfolio, optPort, prices, indexPrice, cash, user, showToast, refreshUser }) {
   const entries = Object.entries(portfolio);
   const invested = entries.reduce((a,[sym,pos]) => a+pos.avg_price*pos.qty, 0);
   const curVal = entries.reduce((a,[sym,pos]) => a+(prices[sym]??BASE_PRICES[sym])*pos.qty, 0);
@@ -544,11 +544,18 @@ function PortfolioTab({ portfolio, optPort, prices, indexPrice, cash }) {
         <div style={{ fontWeight:700, fontSize:15, marginBottom:14 }}>⚡ Options Positions</div>
         {optPort.length===0 ? <div style={{ color:"#444", textAlign:"center", padding:30 }}>No options positions yet</div> : (
           <table>
-            <thead><tr><th>Contract</th><th>Type</th><th>Lots</th><th>Buy Premium</th><th>CMP</th><th>P&amp;L</th></tr></thead>
+            <thead><tr><th>Contract</th><th>Type</th><th>Lots</th><th>Buy Premium</th><th>CMP</th><th>P&amp;L</th><th>Action</th></tr></thead>
             <tbody>
               {optPort.map((pos,i) => {
                 const cmp = bsPrice(pos.type,indexPrice,pos.strike);
                 const pnl = (cmp-pos.premium)*75*pos.lots;
+                const squareOff = async () => {
+                  const proceeds = cmp*75*pos.lots;
+                  const newOptPort = optPort.filter((_,j) => j!==i);
+                  await sb().from("mm_users").update({ options_portfolio:newOptPort, cash:cash+proceeds }).eq("id",user.id);
+                  showToast(`Squared off ${pos.lots} lot(s) — P&L: ${pnl>=0?"+":""}${fmt(pnl)}`, pnl>=0?"success":"info");
+                  await refreshUser();
+                };
                 return (
                   <tr key={i}>
                     <td><b>{INDEX_NAME} {pos.strike} {pos.type}</b></td>
@@ -557,6 +564,7 @@ function PortfolioTab({ portfolio, optPort, prices, indexPrice, cash }) {
                     <td className="mono">{fmt(pos.premium)}</td>
                     <td className="mono" style={{ color:clr(cmp,pos.premium) }}>{fmt(cmp)}</td>
                     <td className="mono" style={{ color:clrV(pnl) }}>{pnl>=0?"+":""}{fmt(pnl)}</td>
+                    <td><button className="btn btn-sell" style={{ padding:"4px 12px", fontSize:11 }} onClick={squareOff}>Square Off</button></td>
                   </tr>
                 );
               })}
@@ -712,14 +720,16 @@ function OrderBookTab({ orders, user, prices, showToast, refreshUser, loadOrders
     }
 
     // Update maker (original order placer)
-    let makerPort = { ...maker.portfolio };
+    let makerPort = JSON.parse(JSON.stringify(maker.portfolio ?? {}));
     let makerCash = maker.cash;
     if (order.type === "buy") {
+      // maker wanted to buy → gets shares, pays cash
       const pos = makerPort[sym] ?? { qty:0, avg_price:0 };
       const nq = pos.qty + qty;
       makerPort[sym] = { qty:nq, avg_price:(pos.avg_price*pos.qty + price*qty)/nq };
       makerCash -= total;
     } else {
+      // maker wanted to sell → loses shares, gets cash
       const pos = makerPort[sym] ?? { qty:0, avg_price:0 };
       const nq = pos.qty - qty;
       if (nq <= 0) delete makerPort[sym]; else makerPort[sym] = { ...pos, qty:nq };
@@ -727,14 +737,16 @@ function OrderBookTab({ orders, user, prices, showToast, refreshUser, loadOrders
     }
 
     // Update taker
-    let takerPort = { ...taker.portfolio };
+    let takerPort = JSON.parse(JSON.stringify(taker.portfolio ?? {}));
     let takerCash = taker.cash;
     if (takerType === "buy") {
+      // taker is buying → pays cash, gets shares
       const pos = takerPort[sym] ?? { qty:0, avg_price:0 };
       const nq = pos.qty + qty;
       takerPort[sym] = { qty:nq, avg_price:(pos.avg_price*pos.qty + price*qty)/nq };
       takerCash -= total;
     } else {
+      // taker is selling → gets cash, loses shares
       const pos = takerPort[sym] ?? { qty:0, avg_price:0 };
       const nq = pos.qty - qty;
       if (nq <= 0) delete takerPort[sym]; else takerPort[sym] = { ...pos, qty:nq };
