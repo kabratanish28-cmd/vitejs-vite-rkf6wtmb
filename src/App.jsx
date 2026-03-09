@@ -988,7 +988,7 @@ function OrderBookTab({ orders, user, prices, showToast, refreshUser, loadOrders
     }
 
     const impact    = (qty/10000)*(order.type==="buy"?1:-1);
-    const newPrices = {...prices,[sym]:Math.max(1,price*(1+impact))};
+    const newPrices = {...prices, [sym]: Math.max(1, prices[sym]*(1+impact))};
     const newIdx    = Object.values(newPrices).reduce((a,v)=>a+v,0)/STOCKS.length*3.1;
 
     await Promise.all([
