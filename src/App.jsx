@@ -539,12 +539,12 @@ function MarketScreen({ user, prices, prevPrices, indexPrice, news, trades, user
 
 // ─── MARKET TAB ───────────────────────────────────────────────────────
 function MarketTab({ prices, prevPrices, portfolio, cash, user, showToast, refreshUser, phase, loadOrders }) {
-  const [sel,  setSel]  = useState(null);
-  const [qty,  setQty]  = useState(1);
-  const [mode, setMode] = useState("buy");
-  const [loading,   setLoading]   = useState(false);
-const [orderType, setOrderType] = useState("market"); // "market" or "limit"
-const [limitPrice, setLimitPrice] = useState("");
+  const [sel,        setSel]        = useState(null);
+  const [qty,        setQty]        = useState(1);
+  const [mode,       setMode]       = useState("buy");
+  const [loading,    setLoading]    = useState(false);
+  const [orderType,  setOrderType]  = useState("market"); // "market" | "limit"
+  const [limitPrice, setLimitPrice] = useState("");
 
   const executeBuy = async (sym, quantity, price) => {
     const total = price * quantity;
@@ -584,20 +584,20 @@ const [limitPrice, setLimitPrice] = useState("");
   const handleAction = () => {
     if (!sel) return;
     const marketPrice = prices[sel.symbol]??sel.base;
-    const lp = parseFloat(limitPrice);
-    if (orderType==="limit" && (!lp || lp<=0)) { showToast("Enter a valid limit price","error"); return; }
-    const price = orderType==="limit" ? lp : marketPrice;
     if (phase===1) {
       if (mode==="sell") { showToast("Selling disabled in Phase 1 — Portfolio Building","error"); return; }
-      executeBuy(sel.symbol, qty, price);
+      executeBuy(sel.symbol, qty, marketPrice);
     } else {
-      placeOrder(sel.symbol, mode, qty, price);
+      const execPrice = (orderType==="limit" && limitPrice) ? parseFloat(limitPrice) : marketPrice;
+      if (orderType==="limit" && (!limitPrice || isNaN(execPrice) || execPrice <= 0)) { showToast("Enter a valid limit price","error"); return; }
+      placeOrder(sel.symbol, mode, qty, execPrice);
     }
   };
 
-  const marketPrice = sel ? (prices[sel.symbol]??sel.base) : 0;
-  const price = (orderType==="limit" && parseFloat(limitPrice)>0) ? parseFloat(limitPrice) : marketPrice;
-  const total = price * qty;
+  const price = sel ? (prices[sel.symbol]??sel.base) : 0;
+  const execPrice = (phase===2 && orderType==="limit" && limitPrice && !isNaN(parseFloat(limitPrice))) ? parseFloat(limitPrice) : price;
+  const total = execPrice * qty;
+  const pos   = sel ? (portfolio[sel.symbol]??{qty:0}) : {qty:0};
 
   return (
     <div style={{display:"grid",gridTemplateColumns:"1fr 320px",gap:20}}>
@@ -626,7 +626,7 @@ const [limitPrice, setLimitPrice] = useState("");
             const own = portfolio[s.symbol]?.qty ?? 0;
             return (
               <div key={s.symbol} className={`stock-card ${sel?.symbol===s.symbol?"selected":""}`}
-                onClick={()=>{setSel(s);setQty(1);}}>
+                onClick={()=>{setSel(s);setQty(1);setOrderType("market");setLimitPrice("");}}>
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:10}}>
                   <div>
                     <div style={{fontWeight:800,fontSize:15,color:"#1a1f36",letterSpacing:"-.2px"}}>{s.symbol}</div>
@@ -653,25 +653,8 @@ const [limitPrice, setLimitPrice] = useState("");
         {sel ? (
           <div className="fade-up">
             <div style={{marginBottom:16}}>
-            {phase===2 && (
-              <div style={{marginBottom:12}}>
-                <div style={{fontSize:11,color:"#9ca3af",marginBottom:5,fontWeight:600,textTransform:"uppercase",letterSpacing:1}}>Order Type</div>
-                <div style={{display:"flex",background:"#f0f4ff",borderRadius:10,padding:3}}>
-                  {["market","limit"].map(ot=>(
-                    <button key={ot} onClick={()=>{ setOrderType(ot); setLimitPrice(""); }} style={{flex:1,padding:"7px 0",borderRadius:8,border:"none",fontWeight:700,fontSize:12,cursor:"pointer",transition:"all .2s",fontFamily:"'DM Sans',sans-serif",background:orderType===ot?"#fff":"none",color:orderType===ot?"#6366f1":"#9ca3af",boxShadow:orderType===ot?"0 1px 4px rgba(99,102,241,.2)":"none"}}>
-                      {ot==="market"?"📊 Market":"🎯 Limit"}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-            {phase===2 && orderType==="limit" && (
-              <div style={{marginBottom:12}}>
-                <div style={{fontSize:11,color:"#9ca3af",marginBottom:5,fontWeight:600,textTransform:"uppercase",letterSpacing:1}}>Limit Price</div>
-                <input type="number" value={limitPrice} onChange={e=>setLimitPrice(e.target.value)} placeholder={`Market: ${fmt(marketPrice)}`} />
-                <div style={{fontSize:11,color:"#6366f1",marginTop:3}}>Order executes only at this price</div>
-              </div>
-            )}
+              <div style={{fontWeight:800,fontSize:18,color:"#1a1f36",letterSpacing:"-.3px"}}>{sel.symbol}</div>
+              <div style={{fontSize:12,color:"#9ca3af"}}>{sel.name}</div>
               <div className="mono" style={{fontSize:26,fontWeight:700,color:clr(price,sel.base),marginTop:6}}>{fmt(price)}</div>
               <div style={{fontSize:12,color:clrV(price-sel.base),marginTop:2}}>{price>=sel.base?"▲":"▼"} {fmtPct(price,sel.base)} from base</div>
             </div>
@@ -691,10 +674,31 @@ const [limitPrice, setLimitPrice] = useState("");
               {pos.qty>0 && <div style={{fontSize:11,color:"#6366f1",marginTop:3}}>Holdings: {pos.qty} shares</div>}
             </div>
 
+            {phase===2 && (
+              <div style={{marginBottom:12}}>
+                <div style={{fontSize:11,color:"#9ca3af",marginBottom:5,fontWeight:600,textTransform:"uppercase",letterSpacing:1}}>Order Type</div>
+                <div style={{display:"flex",background:"#f0f4ff",borderRadius:10,padding:3,gap:3}}>
+                  {["market","limit"].map(ot=>(
+                    <button key={ot} onClick={()=>{ setOrderType(ot); if(ot==="market") setLimitPrice(""); }} style={{flex:1,padding:"7px 0",borderRadius:8,border:"none",fontWeight:700,fontSize:12,cursor:"pointer",transition:"all .2s",fontFamily:"'DM Sans',sans-serif",background:orderType===ot?"#fff":"none",color:orderType===ot?"#6366f1":"#9ca3af",boxShadow:orderType===ot?"0 2px 6px rgba(99,102,241,.15)":"none",textTransform:"uppercase",letterSpacing:.5}}>
+                      {ot==="market"?"⚡ Market":"🎯 Limit"}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {phase===2 && orderType==="limit" && (
+              <div style={{marginBottom:12}}>
+                <div style={{fontSize:11,color:"#9ca3af",marginBottom:5,fontWeight:600,textTransform:"uppercase",letterSpacing:1}}>Limit Price (₹)</div>
+                <input type="number" min={0.01} step={0.01} value={limitPrice} onChange={e=>setLimitPrice(e.target.value)} placeholder={`e.g. ${price.toFixed(2)}`} />
+                <div style={{fontSize:11,color:"#9ca3af",marginTop:3}}>Current market price: {fmt(price)}</div>
+              </div>
+            )}
+
             <div style={{background:"#f8f9ff",borderRadius:12,padding:12,marginBottom:14,border:"1.5px solid #eef0fb"}}>
               <div style={{display:"flex",justifyContent:"space-between",marginBottom:5}}>
-                <span style={{fontSize:12,color:"#9ca3af"}}>Price</span>
-                <span className="mono" style={{fontSize:13,fontWeight:600}}>{fmt(price)}</span>
+                <span style={{fontSize:12,color:"#9ca3af"}}>{phase===2 && orderType==="limit" ? "Limit Price" : "Price"}</span>
+                <span className="mono" style={{fontSize:13,fontWeight:600}}>{phase===2 && orderType==="limit" && limitPrice ? fmt(parseFloat(limitPrice)||0) : fmt(price)}</span>
               </div>
               <div style={{height:1,background:"#eef0fb",margin:"8px 0"}} />
               <div style={{display:"flex",justifyContent:"space-between"}}>
@@ -709,7 +713,7 @@ const [limitPrice, setLimitPrice] = useState("");
               onClick={handleAction}
               disabled={loading}
             >
-              {loading?"Processing…":phase===1?(mode==="buy"?`BUY ${qty} × ${sel.symbol}`:"Disabled in Phase 1"):`PLACE ${mode.toUpperCase()} ORDER — ${qty} × ${sel.symbol}`}
+              {loading?"Processing…":phase===1?(mode==="buy"?`BUY ${qty} × ${sel.symbol}`:"Disabled in Phase 1"):`PLACE ${orderType==="limit"?"LIMIT ":""}${mode.toUpperCase()} ORDER — ${qty} × ${sel.symbol}`}
             </button>
 
             {phase===1 && mode==="sell" && (
