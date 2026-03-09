@@ -542,7 +542,9 @@ function MarketTab({ prices, prevPrices, portfolio, cash, user, showToast, refre
   const [sel,  setSel]  = useState(null);
   const [qty,  setQty]  = useState(1);
   const [mode, setMode] = useState("buy");
-  const [loading, setLoading] = useState(false);
+  const [loading,   setLoading]   = useState(false);
+const [orderType, setOrderType] = useState("market"); // "market" or "limit"
+const [limitPrice, setLimitPrice] = useState("");
 
   const executeBuy = async (sym, quantity, price) => {
     const total = price * quantity;
@@ -581,7 +583,10 @@ function MarketTab({ prices, prevPrices, portfolio, cash, user, showToast, refre
 
   const handleAction = () => {
     if (!sel) return;
-    const price = prices[sel.symbol]??sel.base;
+    const marketPrice = prices[sel.symbol]??sel.base;
+    const lp = parseFloat(limitPrice);
+    if (orderType==="limit" && (!lp || lp<=0)) { showToast("Enter a valid limit price","error"); return; }
+    const price = orderType==="limit" ? lp : marketPrice;
     if (phase===1) {
       if (mode==="sell") { showToast("Selling disabled in Phase 1 — Portfolio Building","error"); return; }
       executeBuy(sel.symbol, qty, price);
@@ -590,9 +595,9 @@ function MarketTab({ prices, prevPrices, portfolio, cash, user, showToast, refre
     }
   };
 
-  const price = sel ? (prices[sel.symbol]??sel.base) : 0;
+  const marketPrice = sel ? (prices[sel.symbol]??sel.base) : 0;
+  const price = (orderType==="limit" && parseFloat(limitPrice)>0) ? parseFloat(limitPrice) : marketPrice;
   const total = price * qty;
-  const pos   = sel ? (portfolio[sel.symbol]??{qty:0}) : {qty:0};
 
   return (
     <div style={{display:"grid",gridTemplateColumns:"1fr 320px",gap:20}}>
@@ -648,8 +653,25 @@ function MarketTab({ prices, prevPrices, portfolio, cash, user, showToast, refre
         {sel ? (
           <div className="fade-up">
             <div style={{marginBottom:16}}>
-              <div style={{fontWeight:800,fontSize:18,color:"#1a1f36",letterSpacing:"-.3px"}}>{sel.symbol}</div>
-              <div style={{fontSize:12,color:"#9ca3af"}}>{sel.name}</div>
+            {phase===2 && (
+              <div style={{marginBottom:12}}>
+                <div style={{fontSize:11,color:"#9ca3af",marginBottom:5,fontWeight:600,textTransform:"uppercase",letterSpacing:1}}>Order Type</div>
+                <div style={{display:"flex",background:"#f0f4ff",borderRadius:10,padding:3}}>
+                  {["market","limit"].map(ot=>(
+                    <button key={ot} onClick={()=>{ setOrderType(ot); setLimitPrice(""); }} style={{flex:1,padding:"7px 0",borderRadius:8,border:"none",fontWeight:700,fontSize:12,cursor:"pointer",transition:"all .2s",fontFamily:"'DM Sans',sans-serif",background:orderType===ot?"#fff":"none",color:orderType===ot?"#6366f1":"#9ca3af",boxShadow:orderType===ot?"0 1px 4px rgba(99,102,241,.2)":"none"}}>
+                      {ot==="market"?"📊 Market":"🎯 Limit"}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+            {phase===2 && orderType==="limit" && (
+              <div style={{marginBottom:12}}>
+                <div style={{fontSize:11,color:"#9ca3af",marginBottom:5,fontWeight:600,textTransform:"uppercase",letterSpacing:1}}>Limit Price</div>
+                <input type="number" value={limitPrice} onChange={e=>setLimitPrice(e.target.value)} placeholder={`Market: ${fmt(marketPrice)}`} />
+                <div style={{fontSize:11,color:"#6366f1",marginTop:3}}>Order executes only at this price</div>
+              </div>
+            )}
               <div className="mono" style={{fontSize:26,fontWeight:700,color:clr(price,sel.base),marginTop:6}}>{fmt(price)}</div>
               <div style={{fontSize:12,color:clrV(price-sel.base),marginTop:2}}>{price>=sel.base?"▲":"▼"} {fmtPct(price,sel.base)} from base</div>
             </div>
